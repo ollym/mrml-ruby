@@ -35,6 +35,14 @@ class MrmlTest < Minitest::Test
     assert_match 'Hello World', result
   end
 
+  def test_that_it_accepts_string_like_templates
+    result = ::MRML.to_html(string_like(valid_template))
+
+    refute_match %r{</?mj.+?>}, result
+    assert_match %r{</?body>}, result
+    assert_match 'Hello World', result
+  end
+
   def test_that_it_generates_json
     result = ::MRML.to_json(valid_template)
     assert_match '"type":"mjml"', result
@@ -129,5 +137,17 @@ class MrmlTest < Minitest::Test
         </mj-body>
       </mjml>
     MJML
+  end
+
+  def string_like(value)
+    Class.new do
+      define_method(:initialize) do |input|
+        @input = input
+      end
+
+      define_method(:to_str) do
+        String.new(@input)
+      end
+    end.new(value)
   end
 end

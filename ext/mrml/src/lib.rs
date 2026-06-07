@@ -1,5 +1,5 @@
 use std::ffi::c_void;
-use std::os::raw::{c_char, c_long};
+use std::os::raw::{c_char, c_int, c_long};
 use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
 use std::slice;
@@ -10,13 +10,13 @@ use mrml::prelude::print::Printable;
 use mrml::prelude::render::RenderOptions;
 
 use rb_sys::{
-  rb_cObject, rb_data_type_struct__bindgen_ty_1, rb_data_type_t,
+  rb_cObject, rb_check_string_type, rb_const_get,
+  rb_data_type_struct__bindgen_ty_1, rb_data_type_t,
   rb_data_typed_object_wrap, rb_define_class_under, rb_define_method,
   rb_define_module, rb_define_singleton_method, rb_eTypeError, rb_exc_new,
-  rb_exc_raise, rb_intern, rb_obj_class, rb_utf8_str_new, rb_const_get,
-  rb_undef_alloc_func, ruby_value_type, size_t, VALUE, Qnil, RB_TYPE,
-  RSTRING_LEN, RSTRING_PTR, RTYPEDDATA_GET_DATA, RTYPEDDATA_P,
-  RTYPEDDATA_TYPE
+  rb_exc_raise, rb_intern, rb_jump_tag, rb_obj_class, rb_protect,
+  rb_undef_alloc_func, rb_utf8_str_new, size_t, VALUE, Qnil, RSTRING_LEN,
+  RSTRING_PTR, RTYPEDDATA_GET_DATA, RTYPEDDATA_P, RTYPEDDATA_TYPE
 };
 
 #[derive(Clone)]
@@ -62,7 +62,8 @@ const TEMPLATE_TYPE_NAME: &[u8] = b"MRML::Template\0";
 
 enum AppError {
   Mrml(String),
-  Type(String)
+  Type(String),
+  RubyJump(c_int)
 }
 
 impl From<String> for AppError {
@@ -163,24 +164,43 @@ where
     Ok(Ok(value)) => value,
     Ok(Err(AppError::Mrml(ex))) => raise_mrml_error(ex),
     Ok(Err(AppError::Type(ex))) => raise_type_error(ex),
+    Ok(Err(AppError::RubyJump(state))) => rb_jump_tag(state),
     Err(_) => raise_mrml_error("internal panic in MRML native extension".to_string())
   }
+}
+
+unsafe extern "C" fn check_string_type(value: VALUE) -> VALUE {
+  rb_check_string_type(value)
+}
+
+unsafe fn string_value(value: VALUE) -> result::Result<VALUE, AppError> {
+  let mut state = 0;
+  let string = rb_protect(Some(check_string_type), value, &mut state);
+
+  if state != 0 {
+    return Err(AppError::RubyJump(state));
+  }
+
+  let nil: VALUE = Qnil.into();
+  if string == nil {
+    return Err(AppError::Type("wrong argument type".to_string()));
+  }
+
+  Ok(string)
 }
 
 unsafe fn with_ruby_str<T, F>(value: VALUE, func: F) -> result::Result<T, AppError>
 where
   F: FnOnce(&str) -> result::Result<T, AppError>
 {
-  if RB_TYPE(value) != ruby_value_type::RUBY_T_STRING {
-    return Err(AppError::Type("wrong argument type".to_string()));
-  }
-
-  let ptr = RSTRING_PTR(value);
-  let len = RSTRING_LEN(value) as usize;
+  let string = string_value(value)?;
+  let ptr = RSTRING_PTR(string);
+  let len = RSTRING_LEN(string) as usize;
   let bytes = slice::from_raw_parts(ptr as *const u8, len);
   let input = std::str::from_utf8(bytes)?;
   let result = func(input);
 
+  rb_sys::rb_gc_guard!(string);
   rb_sys::rb_gc_guard!(value);
 
   result
