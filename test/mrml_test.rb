@@ -52,9 +52,40 @@ class MrmlTest < Minitest::Test
     assert_match %r{</?mj.+?>}, result.to_mjml
   end
 
+  def test_that_returned_strings_are_utf8
+    template = ::MRML::Template.new(utf8_template)
+
+    assert_equal Encoding::UTF_8, template.title.encoding
+    assert_equal Encoding::UTF_8, template.preview.encoding
+    assert_equal Encoding::UTF_8, template.to_mjml.encoding
+    assert_equal Encoding::UTF_8, template.to_json.encoding
+    assert_equal Encoding::UTF_8, template.to_html.encoding
+  end
+
+  def test_that_it_clones_template
+    template = ::MRML::Template.new(valid_template)
+    clone = template.clone
+
+    refute_same template, clone
+    assert_instance_of ::MRML::Template, clone
+    assert_equal template.to_mjml, clone.to_mjml
+  end
+
   def test_that_it_raises_an_exception
     assert_raises ::MRML::Error do
       ::MRML.to_html(invalid_template)
+    end
+  end
+
+  def test_that_it_raises_type_error_for_non_string_template
+    assert_raises TypeError do
+      ::MRML::Template.new(Object.new)
+    end
+  end
+
+  def test_that_it_raises_type_error_for_invalid_utf8_template
+    assert_raises TypeError do
+      ::MRML::Template.new("\xFF".b)
     end
   end
 
@@ -80,5 +111,23 @@ class MrmlTest < Minitest::Test
 
   def hash_template
     @hash_template ||= JSON.parse(json_template)
+  end
+
+  def utf8_template
+    <<~MJML
+      <mjml>
+        <mj-head>
+          <mj-title>Olá Newsletter</mj-title>
+          <mj-preview>Prévia</mj-preview>
+        </mj-head>
+        <mj-body>
+          <mj-section>
+            <mj-column>
+              <mj-text>Olá Mundo</mj-text>
+            </mj-column>
+          </mj-section>
+        </mj-body>
+      </mjml>
+    MJML
   end
 end
